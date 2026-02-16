@@ -12,7 +12,7 @@ Takes text from Scope's prompt box and displays it as centered text on screen. A
 
 ```bash
 # In Scope Settings > Plugins, install from:
-git+https://github.com/YOUR_USERNAME/scope-text-display.git
+git+https://github.com/andrwsun/scope-text-display.git
 ```
 
 ### Local Development
