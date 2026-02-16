@@ -78,15 +78,19 @@ class TextDisplayPipeline(Pipeline):
 
     def __call__(self, **kwargs) -> dict:
         """Render text prompt as centered, auto-scaled text."""
-        # Debug: show what parameters are being passed
-        debug_text = f"kwargs keys: {list(kwargs.keys())}\n\n"
-        if "prompt" in kwargs:
-            debug_text += f"prompt: '{kwargs['prompt']}'\n"
-        if "prompts" in kwargs:
-            debug_text += f"prompts: '{kwargs['prompts']}'\n"
+        # Get the prompt text from the prompts array
+        prompts = kwargs.get("prompts", [])
+        prompt = ""
 
-        # Use debug text as the display text for now
-        prompt = debug_text
+        if prompts and len(prompts) > 0 and isinstance(prompts, list):
+            # Extract the text from the first prompt object
+            first_prompt = prompts[0]
+            if isinstance(first_prompt, dict) and "text" in first_prompt:
+                prompt = first_prompt["text"]
+
+        # Fallback if no prompt provided
+        if not prompt:
+            prompt = "Enter text in the prompt box"
 
         # Read runtime parameters
         text_r = kwargs.get("text_r", 1.0)
