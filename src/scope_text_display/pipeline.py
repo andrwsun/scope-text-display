@@ -24,8 +24,57 @@ class TextDisplayPipeline(Pipeline):
             if device is not None
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
-        # Use PIL's default font for simplicity
-        self.font = ImageFont.load_default()
+        # Try to load a TrueType font, fall back to default if not available
+        self.font_path = None
+        try:
+            # Try common system font paths
+            import platform
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                self.font_path = "/System/Library/Fonts/Helvetica.ttc"
+            elif system == "Linux":
+                self.font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            elif system == "Windows":
+                self.font_path = "C:\\Windows\\Fonts\\arial.ttf"
+        except Exception:
+            pass
+
+    def _get_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+        """Get a font at the specified size."""
+        if self.font_path:
+            try:
+                return ImageFont.truetype(self.font_path, size)
+            except Exception:
+                pass
+        # Fallback to default
+        return ImageFont.load_default()
+
+    def _wrap_text(self, text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont, max_width: int, draw: ImageDraw.ImageDraw) -> list[str]:
+        """Wrap text to fit within max_width."""
+        words = text.split()
+        lines = []
+        current_line = ""
+
+        for word in words:
+            test_line = current_line + (" " if current_line else "") + word
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            line_width = bbox[2] - bbox[0]
+
+            if line_width <= max_width:
+                current_line = test_line
+            else:
+                if current_line:
+                    lines.append(current_line)
+                    current_line = word
+                else:
+                    # Single word is too long, add it anyway
+                    lines.append(word)
+                    current_line = ""
+
+        if current_line:
+            lines.append(current_line)
+
+        return lines if lines else [""]
 
     def __call__(self, **kwargs) -> dict:
         """Render text prompt as centered, auto-scaled text."""
@@ -56,53 +105,69 @@ class TextDisplayPipeline(Pipeline):
         img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
 
-        # Auto-scale text to fit - start with a large font size and shrink if needed
-        # For default font, we'll use a simple size estimation
-        # PIL's default font is fixed size, so we'll need to estimate based on text length
+        # Auto-scale text to fill the screen
+        # Start with a large font size and shrink until it fits
+        max_width = int(width * 0.9)  # Use 90% of width for padding
+        max_height = int(height * 0.9)  # Use 90% of height for padding
 
-        # For default font, approximate character width
-        char_width = 6  # Approximate width of default font characters
-        char_height = 13  # Approximate height of default font
+        # Binary search for optimal font size
+        min_size = 10
+        max_size = 500
+        best_size = min_size
 
-        # Calculate how many characters fit
-        max_chars_width = width // char_width
-        max_lines = height // (char_height + 5)  # Add padding between lines
+        while min_size <= max_size:
+            mid_size = (min_size + max_size) // 2
+            font = self._get_font(mid_size)
 
-        # Simple word wrapping
-        words = prompt.split()
-        lines = []
-        current_line = ""
+            # Wrap text at this font size
+            lines = self._wrap_text(prompt, font, max_width, draw)
 
-        for word in words:
-            test_line = current_line + (" " if current_line else "") + word
-            if len(test_line) <= max_chars_width:
-                current_line = test_line
+            # Calculate total height
+            total_height = 0
+            max_line_width = 0
+            for line in lines:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                line_height = bbox[3] - bbox[1]
+                line_width = bbox[2] - bbox[0]
+                total_height += line_height
+                max_line_width = max(max_line_width, line_width)
+
+            # Add line spacing
+            if len(lines) > 1:
+                total_height += (len(lines) - 1) * (mid_size // 4)
+
+            # Check if it fits
+            if total_height <= max_height and max_line_width <= max_width:
+                best_size = mid_size
+                min_size = mid_size + 1  # Try larger
             else:
-                if current_line:
-                    lines.append(current_line)
-                current_line = word
+                max_size = mid_size - 1  # Try smaller
 
-        if current_line:
-            lines.append(current_line)
+        # Use the best size found
+        font = self._get_font(best_size)
+        lines = self._wrap_text(prompt, font, max_width, draw)
 
-        # Limit to max lines
-        lines = lines[:max_lines]
+        # Calculate total text block height for centering
+        line_heights = []
+        for line in lines:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_heights.append(bbox[3] - bbox[1])
 
-        # Calculate total text block height
-        total_height = len(lines) * (char_height + 5)
+        line_spacing = best_size // 4
+        total_height = sum(line_heights) + line_spacing * (len(lines) - 1)
 
         # Start y position to center vertically
         y = (height - total_height) // 2
 
         # Draw each line centered
-        for line in lines:
-            # Get line width for centering
-            line_width = len(line) * char_width
+        for i, line in enumerate(lines):
+            bbox = draw.textbbox((0, 0), line, font=font)
+            line_width = bbox[2] - bbox[0]
             x = (width - line_width) // 2
 
             # Draw text
-            draw.text((x, y), line, fill=text_color, font=self.font)
-            y += char_height + 5
+            draw.text((x, y), line, fill=text_color, font=font)
+            y += line_heights[i] + line_spacing
 
         # Convert to tensor
         img_array = torch.tensor(list(img.getdata()), dtype=torch.float32, device=self.device)
