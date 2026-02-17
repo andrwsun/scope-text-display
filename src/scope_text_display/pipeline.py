@@ -30,7 +30,11 @@ class TextDisplayPipeline(Pipeline):
         # Cache: (font_name, prompt, width, height) -> (font_size, lines)
         self._layout_cache = {}
 
-        # Cache: full rendered frame
+        # Cache: (font_name, prompt, width, height) -> np.ndarray (H, W, 1) float32 alpha mask
+        # Render text once as white-on-transparent; color is applied via numpy multiply (no PIL redraw)
+        self._mask_cache = {}
+
+        # Cache: full rendered frame (fast path when nothing changed at all)
         # Key: (font_name, prompt, width, height, text_r, text_g, text_b, bg_opacity)
         self._frame_cache = {}
         self._frame_cache_key = None
@@ -161,9 +165,10 @@ class TextDisplayPipeline(Pipeline):
         height = int(kwargs.get("height", 512))
         width = int(kwargs.get("width", 512))
 
-        # Clear layout cache if font changed
+        # Clear layout + mask cache if font changed
         if self._current_font != requested_font:
             self._layout_cache.clear()
+            self._mask_cache.clear()
             self._frame_cache.clear()
             self._current_font = requested_font
 
@@ -214,38 +219,37 @@ class TextDisplayPipeline(Pipeline):
             sys.stderr.write(f"[TEXT DISPLAY] New layout: '{prompt[:30]}' | {best_size}px | {width}x{height} | font={font_display_name}\n")
             sys.stderr.flush()
 
-        # Render to numpy array (CPU only, no VRAM)
-        text_color = (int(text_r * 255), int(text_g * 255), int(text_b * 255), 255)
-        font = self._get_font(font_path, best_size)
-
-        img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(img)
-
-        # Calculate centering
-        line_spacing = best_size // 4
-        line_heights = []
-        for line in lines:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            line_heights.append(bbox[3] - bbox[1])
-        total_height = sum(line_heights) + line_spacing * (len(lines) - 1)
-
-        y = (height - total_height) // 2
-        for i, line in enumerate(lines):
-            bbox = draw.textbbox((0, 0), line, font=font)
-            x = (width - (bbox[2] - bbox[0])) // 2
-            draw.text((x, y), line, fill=text_color, font=font)
-            y += line_heights[i] + line_spacing
-
-        # Fast PIL → numpy → torch (no list conversion, no VRAM)
-        img_np = np.array(img, dtype=np.float32) / 255.0  # (H, W, 4)
-        rgb = img_np[..., :3]
-        alpha = img_np[..., 3:4]
-
-        if bg_opacity > 0:
-            result = np.ones((height, width, 3), dtype=np.float32) * bg_opacity + rgb * (1 - bg_opacity) * (1 - alpha)
-            result = result * (1 - alpha) + rgb * alpha
+        # Get or build alpha mask (PIL render, done once per layout — not per color change)
+        if layout_key in self._mask_cache:
+            mask = self._mask_cache[layout_key]
         else:
-            result = rgb
+            font = self._get_font(font_path, best_size)
+            mask_img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+            mask_draw = ImageDraw.Draw(mask_img)
+
+            line_spacing = best_size // 4
+            line_heights = []
+            for line in lines:
+                bbox = mask_draw.textbbox((0, 0), line, font=font)
+                line_heights.append(bbox[3] - bbox[1])
+            total_height = sum(line_heights) + line_spacing * (len(lines) - 1)
+
+            y = (height - total_height) // 2
+            for i, line in enumerate(lines):
+                bbox = mask_draw.textbbox((0, 0), line, font=font)
+                x = (width - (bbox[2] - bbox[0])) // 2
+                mask_draw.text((x, y), line, fill=(255, 255, 255, 255), font=font)
+                y += line_heights[i] + line_spacing
+
+            # Extract alpha channel only — color is applied via numpy, no PIL needed for color changes
+            mask = np.array(mask_img, dtype=np.float32)[:, :, 3:4] / 255.0  # (H, W, 1)
+            self._mask_cache[layout_key] = mask
+
+        # Color compositing: pure numpy multiply — runs every frame but costs ~microseconds
+        # mask=1 → text pixel, mask=0 → background pixel
+        text_color_np = np.array([text_r, text_g, text_b], dtype=np.float32)
+        bg_color_np = np.array([bg_opacity, bg_opacity, bg_opacity], dtype=np.float32)
+        result = mask * text_color_np + (1.0 - mask) * bg_color_np  # (H, W, 3)
 
         # Final tensor on CPU - no VRAM used
         tensor = torch.from_numpy(result.clip(0, 1)).unsqueeze(0)  # (1, H, W, 3)
