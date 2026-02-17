@@ -101,9 +101,17 @@ class TextDisplayConfig(BasePipelineConfig):
     pipeline_name = "Text Display"
     pipeline_description = "Renders user prompts as centered, auto-scaled text on screen"
 
-    supports_prompts = True  # Enable the prompt box!
+    supports_prompts = False  # Text has its own dedicated field; prompts stay reserved for the video model
 
     modes = {"text": ModeDefaults(default=True)}
+
+    # --- Text Content ---
+
+    text: str = Field(
+        default="Hello Scope!",
+        description="Text to display on screen. Controlled independently from the video model prompt.",
+        json_schema_extra=ui_field_config(order=0, label="Text"),
+    )
 
     # --- Font Selection (Runtime) ---
 

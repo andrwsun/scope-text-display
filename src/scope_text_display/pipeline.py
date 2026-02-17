@@ -146,15 +146,8 @@ class TextDisplayPipeline(Pipeline):
 
     def __call__(self, **kwargs) -> dict:
         """Render text prompt as centered, auto-scaled text. Zero VRAM usage."""
-        # Extract prompt
-        prompts = kwargs.get("prompts", [])
-        prompt = ""
-        if prompts and isinstance(prompts, list) and len(prompts) > 0:
-            first = prompts[0]
-            if isinstance(first, dict) and "text" in first:
-                prompt = first["text"]
-        if not prompt:
-            prompt = "Enter text in the prompt box"
+        # Text comes from the plugin's own dedicated parameter — never touches the shared video model prompt
+        prompt = str(kwargs.get("text", "Hello Scope!")).strip() or "Hello Scope!"
 
         # Read parameters
         requested_font = kwargs.get("font_name", "Helvetica")
