@@ -126,11 +126,9 @@ class TextDisplayPipeline(Pipeline):
         cache_key = (prompt, width, height)
 
         if cache_key in self._font_cache:
-            # Use cached values
+            # Use cached values (silent - no logging spam)
             best_size, lines = self._font_cache[cache_key]
             font = self._get_font(best_size)
-            sys.stderr.write(f"[TEXT DISPLAY] Using cached font size {best_size}px for '{prompt[:30]}...'\n")
-            sys.stderr.flush()
         else:
             # Binary search for optimal font size
             min_size = 10
