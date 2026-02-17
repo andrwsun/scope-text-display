@@ -1,6 +1,6 @@
 # scope-text-display
 
-GPU-accelerated text display plugin for Daydream Scope. Renders user prompts as centered, auto-scaled text.
+Text display plugin for Daydream Scope. Renders user prompts as centered, auto-scaled text.
 
 ## What it does
 
