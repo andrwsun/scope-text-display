@@ -156,6 +156,15 @@ class TextDisplayPipeline(Pipeline):
         font = self._get_font(best_size)
         lines = self._wrap_text(prompt, font, max_width, draw)
 
+        # Debug: print font information
+        print(f"\n[TEXT DISPLAY] Font Info:")
+        print(f"  Font path: {self.font_path}")
+        print(f"  Font size: {best_size}px")
+        print(f"  Text content: '{prompt}'")
+        print(f"  Number of lines: {len(lines)}")
+        print(f"  Lines: {lines}")
+        print(f"  Resolution: {width}x{height}")
+
         # Calculate total text block height for centering
         line_heights = []
         for line in lines:
