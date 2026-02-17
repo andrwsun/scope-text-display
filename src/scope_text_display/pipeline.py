@@ -26,19 +26,23 @@ class TextDisplayPipeline(Pipeline):
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
 
-        # Get requested font name from load-time parameters
-        requested_font = kwargs.get("font_name", "Helvetica")
+        # Cache for font paths (font_name -> font_path)
+        self._font_path_cache = {}
 
-        # Try to find the requested font with fallback chain
-        self.font_path = None
-        self.font_name = None
-        self._load_font(requested_font)
+        # Track current font for cache invalidation
+        self._current_font = None
+        self._current_font_path = None
 
         # Cache for font size calculations
-        self._font_cache = {}  # {(prompt_text, width, height): (font_size, lines)}
+        # Key: (font_name, prompt_text, width, height) -> (font_size, lines)
+        self._text_cache = {}
 
-    def _load_font(self, requested_font: str):
-        """Load font with fallback chain for cross-platform compatibility."""
+    def _get_font_path(self, requested_font: str) -> tuple[str | None, str]:
+        """Get font path with fallback chain. Returns (font_path, font_name)."""
+        # Check cache first
+        if requested_font in self._font_path_cache:
+            return self._font_path_cache[requested_font]
+
         import platform
         import os
 
@@ -103,11 +107,11 @@ class TextDisplayPipeline(Pipeline):
         if requested_font in font_map and system in font_map[requested_font]:
             for font_path in font_map[requested_font][system]:
                 if os.path.exists(font_path):
-                    self.font_path = font_path
-                    self.font_name = requested_font
+                    result = (font_path, requested_font)
+                    self._font_path_cache[requested_font] = result
                     sys.stderr.write(f"[TEXT DISPLAY] Loaded font: {requested_font} from {font_path}\n")
                     sys.stderr.flush()
-                    return
+                    return result
 
         # Try system-specific fallbacks
         sys.stderr.write(f"[TEXT DISPLAY] Warning: '{requested_font}' not found, trying fallbacks...\n")
@@ -116,22 +120,24 @@ class TextDisplayPipeline(Pipeline):
         if system in generic_fallbacks:
             for font_path in generic_fallbacks[system]:
                 if os.path.exists(font_path):
-                    self.font_path = font_path
-                    self.font_name = "System Default"
+                    result = (font_path, "System Default")
+                    self._font_path_cache[requested_font] = result
                     sys.stderr.write(f"[TEXT DISPLAY] Using fallback font from {font_path}\n")
                     sys.stderr.flush()
-                    return
+                    return result
 
         # Final fallback: use PIL's built-in default (very small)
         sys.stderr.write(f"[TEXT DISPLAY] Warning: No TrueType fonts found, using PIL default (small)\n")
         sys.stderr.flush()
-        self.font_name = "PIL Default"
+        result = (None, "PIL Default")
+        self._font_path_cache[requested_font] = result
+        return result
 
-    def _get_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    def _get_font(self, font_path: str | None, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         """Get a font at the specified size."""
-        if self.font_path:
+        if font_path:
             try:
-                return ImageFont.truetype(self.font_path, size)
+                return ImageFont.truetype(font_path, size)
             except Exception:
                 pass
         # Fallback to default
@@ -181,10 +187,22 @@ class TextDisplayPipeline(Pipeline):
             prompt = "Enter text in the prompt box"
 
         # Read runtime parameters
+        requested_font = kwargs.get("font_name", "Helvetica")
         text_r = kwargs.get("text_r", 1.0)
         text_g = kwargs.get("text_g", 1.0)
         text_b = kwargs.get("text_b", 1.0)
         bg_opacity = kwargs.get("bg_opacity", 0.0)
+
+        # Get font path (with caching)
+        font_path, font_display_name = self._get_font_path(requested_font)
+
+        # Clear text cache if font changed
+        if self._current_font != requested_font:
+            self._text_cache.clear()
+            self._current_font = requested_font
+            self._current_font_path = font_path
+            sys.stderr.write(f"[TEXT DISPLAY] Switched to font: {font_display_name}\n")
+            sys.stderr.flush()
 
         # Get output resolution from kwargs (Scope provides this)
         height = kwargs.get("height", 512)
@@ -207,12 +225,12 @@ class TextDisplayPipeline(Pipeline):
         max_width = int(width * 0.9)  # Use 90% of width for padding
         max_height = int(height * 0.9)  # Use 90% of height for padding
 
-        cache_key = (prompt, width, height)
+        cache_key = (requested_font, prompt, width, height)
 
-        if cache_key in self._font_cache:
+        if cache_key in self._text_cache:
             # Use cached values (silent - no logging spam)
-            best_size, lines = self._font_cache[cache_key]
-            font = self._get_font(best_size)
+            best_size, lines = self._text_cache[cache_key]
+            font = self._get_font(font_path, best_size)
         else:
             # Binary search for optimal font size
             min_size = 10
@@ -221,7 +239,7 @@ class TextDisplayPipeline(Pipeline):
 
             while min_size <= max_size:
                 mid_size = (min_size + max_size) // 2
-                font = self._get_font(mid_size)
+                font = self._get_font(font_path, mid_size)
 
                 # Wrap text at this font size
                 lines = self._wrap_text(prompt, font, max_width, draw)
@@ -248,16 +266,16 @@ class TextDisplayPipeline(Pipeline):
                     max_size = mid_size - 1  # Try smaller
 
             # Use the best size found
-            font = self._get_font(best_size)
+            font = self._get_font(font_path, best_size)
             lines = self._wrap_text(prompt, font, max_width, draw)
 
             # Cache the result
-            self._font_cache[cache_key] = (best_size, lines)
+            self._text_cache[cache_key] = (best_size, lines)
 
             # Debug: log font information to stderr
             sys.stderr.write(f"\n[TEXT DISPLAY] Rendering Info:\n")
-            sys.stderr.write(f"  Font: {self.font_name}\n")
-            sys.stderr.write(f"  Font path: {self.font_path}\n")
+            sys.stderr.write(f"  Font: {font_display_name}\n")
+            sys.stderr.write(f"  Font path: {font_path}\n")
             sys.stderr.write(f"  Font size: {best_size}px\n")
             sys.stderr.write(f"  Text content: '{prompt}'\n")
             sys.stderr.write(f"  Number of lines: {len(lines)}\n")

@@ -33,7 +33,7 @@ class TextDisplayConfig(BasePipelineConfig):
     ] = Field(
         default="Helvetica",
         description="Font to use for text rendering. Falls back to available system fonts if not found.",
-        json_schema_extra=ui_field_config(order=0, label="Font", is_load_param=True),
+        json_schema_extra=ui_field_config(order=0, label="Font"),
     )
 
     # --- Text Color ---
