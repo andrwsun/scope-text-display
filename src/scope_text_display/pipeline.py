@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+import sys
 
 import torch
 from PIL import Image, ImageDraw, ImageFont
@@ -38,6 +39,9 @@ class TextDisplayPipeline(Pipeline):
                 self.font_path = "C:\\Windows\\Fonts\\arial.ttf"
         except Exception:
             pass
+
+        # Cache for font size calculations
+        self._font_cache = {}  # {(prompt_text, width, height): (font_size, lines)}
 
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         """Get a font at the specified size."""
@@ -115,55 +119,68 @@ class TextDisplayPipeline(Pipeline):
         draw = ImageDraw.Draw(img)
 
         # Auto-scale text to fill the screen
-        # Start with a large font size and shrink until it fits
+        # Use cache to avoid recalculating font size for the same text
         max_width = int(width * 0.9)  # Use 90% of width for padding
         max_height = int(height * 0.9)  # Use 90% of height for padding
 
-        # Binary search for optimal font size
-        min_size = 10
-        max_size = 500
-        best_size = min_size
+        cache_key = (prompt, width, height)
 
-        while min_size <= max_size:
-            mid_size = (min_size + max_size) // 2
-            font = self._get_font(mid_size)
+        if cache_key in self._font_cache:
+            # Use cached values
+            best_size, lines = self._font_cache[cache_key]
+            font = self._get_font(best_size)
+            sys.stderr.write(f"[TEXT DISPLAY] Using cached font size {best_size}px for '{prompt[:30]}...'\n")
+            sys.stderr.flush()
+        else:
+            # Binary search for optimal font size
+            min_size = 10
+            max_size = 500
+            best_size = min_size
 
-            # Wrap text at this font size
+            while min_size <= max_size:
+                mid_size = (min_size + max_size) // 2
+                font = self._get_font(mid_size)
+
+                # Wrap text at this font size
+                lines = self._wrap_text(prompt, font, max_width, draw)
+
+                # Calculate total height
+                total_height = 0
+                max_line_width = 0
+                for line in lines:
+                    bbox = draw.textbbox((0, 0), line, font=font)
+                    line_height = bbox[3] - bbox[1]
+                    line_width = bbox[2] - bbox[0]
+                    total_height += line_height
+                    max_line_width = max(max_line_width, line_width)
+
+                # Add line spacing
+                if len(lines) > 1:
+                    total_height += (len(lines) - 1) * (mid_size // 4)
+
+                # Check if it fits
+                if total_height <= max_height and max_line_width <= max_width:
+                    best_size = mid_size
+                    min_size = mid_size + 1  # Try larger
+                else:
+                    max_size = mid_size - 1  # Try smaller
+
+            # Use the best size found
+            font = self._get_font(best_size)
             lines = self._wrap_text(prompt, font, max_width, draw)
 
-            # Calculate total height
-            total_height = 0
-            max_line_width = 0
-            for line in lines:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                line_height = bbox[3] - bbox[1]
-                line_width = bbox[2] - bbox[0]
-                total_height += line_height
-                max_line_width = max(max_line_width, line_width)
+            # Cache the result
+            self._font_cache[cache_key] = (best_size, lines)
 
-            # Add line spacing
-            if len(lines) > 1:
-                total_height += (len(lines) - 1) * (mid_size // 4)
-
-            # Check if it fits
-            if total_height <= max_height and max_line_width <= max_width:
-                best_size = mid_size
-                min_size = mid_size + 1  # Try larger
-            else:
-                max_size = mid_size - 1  # Try smaller
-
-        # Use the best size found
-        font = self._get_font(best_size)
-        lines = self._wrap_text(prompt, font, max_width, draw)
-
-        # Debug: print font information
-        print(f"\n[TEXT DISPLAY] Font Info:")
-        print(f"  Font path: {self.font_path}")
-        print(f"  Font size: {best_size}px")
-        print(f"  Text content: '{prompt}'")
-        print(f"  Number of lines: {len(lines)}")
-        print(f"  Lines: {lines}")
-        print(f"  Resolution: {width}x{height}")
+            # Debug: log font information to stderr
+            sys.stderr.write(f"\n[TEXT DISPLAY] Font Info:\n")
+            sys.stderr.write(f"  Font path: {self.font_path}\n")
+            sys.stderr.write(f"  Font size: {best_size}px\n")
+            sys.stderr.write(f"  Text content: '{prompt}'\n")
+            sys.stderr.write(f"  Number of lines: {len(lines)}\n")
+            sys.stderr.write(f"  Lines: {lines}\n")
+            sys.stderr.write(f"  Resolution: {width}x{height}\n")
+            sys.stderr.flush()
 
         # Calculate total text block height for centering
         line_heights = []
