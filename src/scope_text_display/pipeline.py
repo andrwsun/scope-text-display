@@ -25,23 +25,107 @@ class TextDisplayPipeline(Pipeline):
             if device is not None
             else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         )
-        # Try to load a TrueType font, fall back to default if not available
+
+        # Get requested font name from load-time parameters
+        requested_font = kwargs.get("font_name", "Helvetica")
+
+        # Try to find the requested font with fallback chain
         self.font_path = None
-        try:
-            # Try common system font paths
-            import platform
-            system = platform.system()
-            if system == "Darwin":  # macOS
-                self.font_path = "/System/Library/Fonts/Helvetica.ttc"
-            elif system == "Linux":
-                self.font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-            elif system == "Windows":
-                self.font_path = "C:\\Windows\\Fonts\\arial.ttf"
-        except Exception:
-            pass
+        self.font_name = None
+        self._load_font(requested_font)
 
         # Cache for font size calculations
         self._font_cache = {}  # {(prompt_text, width, height): (font_size, lines)}
+
+    def _load_font(self, requested_font: str):
+        """Load font with fallback chain for cross-platform compatibility."""
+        import platform
+        import os
+
+        system = platform.system()
+
+        # Map font names to potential file paths on different systems
+        font_map = {
+            "Helvetica": {
+                "Darwin": ["/System/Library/Fonts/Helvetica.ttc", "/System/Library/Fonts/Supplemental/Helvetica.ttc"],
+                "Linux": ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
+                "Windows": ["C:\\Windows\\Fonts\\arial.ttf"],
+            },
+            "Arial": {
+                "Darwin": ["/Library/Fonts/Arial.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf"],
+                "Linux": ["/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"],
+                "Windows": ["C:\\Windows\\Fonts\\arial.ttf"],
+            },
+            "Times New Roman": {
+                "Darwin": ["/Library/Fonts/Times New Roman.ttf"],
+                "Linux": ["/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf"],
+                "Windows": ["C:\\Windows\\Fonts\\times.ttf"],
+            },
+            "Courier": {
+                "Darwin": ["/System/Library/Fonts/Courier.dfont"],
+                "Linux": ["/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"],
+                "Windows": ["C:\\Windows\\Fonts\\cour.ttf"],
+            },
+            "Monaco": {
+                "Darwin": ["/System/Library/Fonts/Monaco.dfont"],
+                "Linux": ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"],
+                "Windows": ["C:\\Windows\\Fonts\\consola.ttf"],
+            },
+            "SF Pro Display": {
+                "Darwin": ["/System/Library/Fonts/SFNS.ttf"],
+                "Linux": [],
+                "Windows": [],
+            },
+            "SF Mono": {
+                "Darwin": ["/System/Library/Fonts/SFNSMono.ttf"],
+                "Linux": [],
+                "Windows": [],
+            },
+        }
+
+        # Generic fallbacks for fonts not in the map
+        generic_fallbacks = {
+            "Darwin": [
+                "/System/Library/Fonts/Helvetica.ttc",
+                "/System/Library/Fonts/SFNS.ttf",
+            ],
+            "Linux": [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            ],
+            "Windows": [
+                "C:\\Windows\\Fonts\\arial.ttf",
+                "C:\\Windows\\Fonts\\segoeui.ttf",
+            ],
+        }
+
+        # Try requested font paths
+        if requested_font in font_map and system in font_map[requested_font]:
+            for font_path in font_map[requested_font][system]:
+                if os.path.exists(font_path):
+                    self.font_path = font_path
+                    self.font_name = requested_font
+                    sys.stderr.write(f"[TEXT DISPLAY] Loaded font: {requested_font} from {font_path}\n")
+                    sys.stderr.flush()
+                    return
+
+        # Try system-specific fallbacks
+        sys.stderr.write(f"[TEXT DISPLAY] Warning: '{requested_font}' not found, trying fallbacks...\n")
+        sys.stderr.flush()
+
+        if system in generic_fallbacks:
+            for font_path in generic_fallbacks[system]:
+                if os.path.exists(font_path):
+                    self.font_path = font_path
+                    self.font_name = "System Default"
+                    sys.stderr.write(f"[TEXT DISPLAY] Using fallback font from {font_path}\n")
+                    sys.stderr.flush()
+                    return
+
+        # Final fallback: use PIL's built-in default (very small)
+        sys.stderr.write(f"[TEXT DISPLAY] Warning: No TrueType fonts found, using PIL default (small)\n")
+        sys.stderr.flush()
+        self.font_name = "PIL Default"
 
     def _get_font(self, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         """Get a font at the specified size."""
@@ -171,7 +255,8 @@ class TextDisplayPipeline(Pipeline):
             self._font_cache[cache_key] = (best_size, lines)
 
             # Debug: log font information to stderr
-            sys.stderr.write(f"\n[TEXT DISPLAY] Font Info:\n")
+            sys.stderr.write(f"\n[TEXT DISPLAY] Rendering Info:\n")
+            sys.stderr.write(f"  Font: {self.font_name}\n")
             sys.stderr.write(f"  Font path: {self.font_path}\n")
             sys.stderr.write(f"  Font size: {best_size}px\n")
             sys.stderr.write(f"  Text content: '{prompt}'\n")

@@ -1,3 +1,4 @@
+from typing import Literal
 from pydantic import Field
 
 from scope.core.pipelines.base_schema import BasePipelineConfig, ModeDefaults, ui_field_config
@@ -13,6 +14,27 @@ class TextDisplayConfig(BasePipelineConfig):
     supports_prompts = True  # Enable the prompt box!
 
     modes = {"text": ModeDefaults(default=True)}
+
+    # --- Font Selection (Load-time) ---
+
+    font_name: Literal[
+        "Helvetica",
+        "Arial",
+        "Times New Roman",
+        "Courier",
+        "Verdana",
+        "Georgia",
+        "Comic Sans MS",
+        "Impact",
+        "Trebuchet MS",
+        "Monaco",
+        "SF Pro Display",
+        "SF Mono",
+    ] = Field(
+        default="Helvetica",
+        description="Font to use for text rendering. Falls back to available system fonts if not found.",
+        json_schema_extra=ui_field_config(order=0, label="Font", is_load_param=True),
+    )
 
     # --- Text Color ---
 
