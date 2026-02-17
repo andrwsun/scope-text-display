@@ -101,7 +101,7 @@ class TextDisplayConfig(BasePipelineConfig):
     pipeline_name = "Text Display"
     pipeline_description = "Renders user prompts as centered, auto-scaled text on screen"
 
-    supports_prompts = False  # Text has its own dedicated field; prompts stay reserved for the video model
+    supports_prompts = True  # AI generation prompt box — separate from the display text field below
 
     modes = {"text": ModeDefaults(default=True)}
 
