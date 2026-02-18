@@ -3,7 +3,7 @@ from pydantic import Field
 import platform
 import os
 
-from scope.core.pipelines.base_schema import BasePipelineConfig, ModeDefaults, ui_field_config
+from scope.core.pipelines.base_schema import BasePipelineConfig, ModeDefaults, UsageType, ui_field_config
 
 
 def _get_available_fonts() -> tuple[str, ...]:
@@ -104,6 +104,9 @@ class TextDisplayConfig(BasePipelineConfig):
     supports_prompts = True  # AI generation prompt box — separate from the display text field below
 
     modes = {"text": ModeDefaults(default=True)}
+
+    # Show in the preprocessor dropdown so the text frame can feed into a video model
+    usage = [UsageType.PREPROCESSOR]
 
     # --- Text Content ---
 
